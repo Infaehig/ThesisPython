@@ -6,8 +6,10 @@ In particular there are functions for handling hdf5 files for storing meshes and
 
 import os
 import dolfin
+#import dolfin.MPI as MPI
 import h5py
 import numpy
+from .utils import type_dict
 
 """ Wrapper around h5py with functions to read and write entities from dolfin
 """
@@ -18,6 +20,29 @@ class H5File:
 		self.compression = compression
 		self.cell_attributes = []
 		self.facet_attributes = []
+		if mode == 'r':
+			xdmf = dolfin.XDMFFile(dolfin.MPI.comm_world, f'{self.basename}_cells.xdmf')
+			self.mesh = dolfin.Mesh()
+			xdmf.read(self.mesh)
+			self.mesh.init()
+			self.basedim = self.mesh.geometry().dim()
+			self.num_vertices = self.mesh.num_vertices()
+			self.num_cells = self.mesh.num_cells()
+			self.num_facets = self.mesh.num_facets()
+			self.dimension_dict = {
+				self.num_cells: self.basedim,
+				self.num_facets: self.basedim-1
+			}
+			for key in self.file.keys():
+				if key in ['vertices', 'cells', 'facets']:
+					continue
+				dset = self.file[key]
+				if isinstance(dset, h5py.Group):
+					continue
+				if dset.shape[0] == self.num_cells:
+					self.cell_attributes.append(key)
+				elif dset.shape[0] == self.num_facets:
+					self.facet_attributes.append(key)
 
 	def close(self):
 		if hasattr(self, 'file'):
@@ -40,6 +65,10 @@ class H5File:
 		self.num_vertices = mesh.num_vertices()
 		self.num_cells = mesh.num_cells()
 		self.num_facets = mesh.num_facets()
+		self.dimension_dict = {
+			self.num_cells: self.basedim,
+			self.num_facets: self.basedim-1
+		}
 		if transform is None:
 			self.file.create_dataset('/vertices', (self.num_vertices, self.basedim), data = mesh.coordinates(), compression = self.compression)
 		else:
@@ -47,13 +76,24 @@ class H5File:
 		self.file.create_dataset('/cells', (self.num_cells, self.basedim+1), data = numpy.array(mesh.cells(), dtype = numpy.uintp), compression = self.compression)
 		self.file.create_dataset('/facets', (self.num_facets, self.basedim), data = numpy.array([facet.entities(0) for facet in dolfin.facets(mesh)], dtype = numpy.uintp), compression = self.compression)
 
-	def add_cell_attribute(self, data, *, name = 'cell_markers'):
-		self.file.create_dataset(f'/{name}', (self.num_cells, 1), data = data, compression = self.compression)
-		self.cell_attributes.append(name)
+	def add_attribute(self, data, key):
+		shape = data.shape
+		self.file.create_dataset(f'/{key}', shape, data = data, compression = self.compression)
+		if shape[0] == self.num_cells:
+			self.cell_attributes.append(key)
+		elif shape[0] == self.num_facets:
+			self.facet_attributes.append(key)
 
-	def add_facet_attribute(self, data, *, name = 'facet_markers'):
-		self.file.create_dataset(f'/{name}', (self.num_facets, 1), data = data, compression = self.compression)
-		self.facet_attributes.append(name)
+	def read_attribute(self, key):
+		try:
+			dset = self.file[key]
+			dim = self.dimension_dict[dset.shape[0]]
+			dtype = type_dict[dset.dtype.kind]
+			mf = dolfin.MeshFunction(dtype, self.mesh, dim)
+			mf.set_values(dset[:])
+			return mf
+		except:
+			raise Exception(f'Error reading attribute: {key}')
 
 	def write_xdmf_cells(self):
 		cell_file = open(f'{self.basename}_cells.xdmf', 'w')
