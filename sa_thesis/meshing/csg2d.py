@@ -19,7 +19,10 @@ class Circle(CSG2D):
 		segments = max(int(4*radius/maxh), 32)
 		eps *= radius
 		super().__init__(mshr.Circle(dolfin.Point(*center), radius, segments), boundaries = [
-			dolfin.CompiledSubDomain('on_boundary && near((x[0]-c0)*(x[0]-c0)+(x[1]-c1)*(x[1]-c1), rr, eps)', c0 = center[0], c1 = center[1], rr = radius * radius, eps = eps)
+			dolfin.CompiledSubDomain(
+				'on_boundary && near((x[0]-c0)*(x[0]-c0) + (x[1]-c1)*(x[1]-c1), rr, eps)',
+				c0 = center[0], c1 = center[1], rr = radius * radius, eps = eps
+			)
 		])
 
 class Rectangle(CSG2D):

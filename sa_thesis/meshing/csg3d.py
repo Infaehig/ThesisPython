@@ -22,14 +22,20 @@ class HalfPlane(CSG3D):
 	def __init__(self, zero, normal, *, eps = csg_eps):
 		value = numpy.array(zero).dot(numpy.array(normal))
 		super().__init__(netgen_csg.Plane(netgen_csg.Pnt(*zero), netgen_csg.Vec(*normal)), boundaries = [
-			dolfin.CompiledSubDomain('on_boundary && near(x[0]*n0+x[1]*n1+x[2]*n2, value, eps)', n0 = normal[0], n1 = normal[1], n2 = normal[2], value = value, eps = eps)
+			dolfin.CompiledSubDomain(
+				'on_boundary && near(x[0]*n0 + x[1]*n1 + x[2]*n2, value, eps)',
+				n0 = normal[0], n1 = normal[1], n2 = normal[2], value = value, eps = eps
+			)
 		])
 
 class Sphere(CSG3D):
 	def __init__(self, center, radius, *, eps = csg_eps):
 		eps *= radius
 		super().__init__(netgen_csg.Sphere(netgen_csg.Pnt(*center), radius), boundaries = [
-			dolfin.CompiledSubDomain('on_boundary && near((x[0]-c0)*(x[0]-c0)+(x[1]-c1)*(x[1]-c1)+(x[2]-c2)*(x[2]-c2), rr, eps)', c0 = center[0], c1 = center[1], c2 = center[2], rr = radius * radius, eps = eps)
+			dolfin.CompiledSubDomain(
+				'on_boundary && near((x[0]-c0)*(x[0]-c0) + (x[1]-c1)*(x[1]-c1) + (x[2]-c2)*(x[2]-c2), rr, eps)',
+				c0 = center[0], c1 = center[1], c2 = center[2], rr = radius*radius, eps = eps
+			)
 		])
 
 
@@ -39,7 +45,10 @@ class Cylinder(CSG3D):
 		unit /= numpy.linalg.norm(unit)
 		eps *= radius
 		super().__init__(netgen_csg.Cylinder(netgen_csg.Pnt(*pointa), netgen_csg.Pnt(*pointb), radius), boundaries = [
-			dolfin.CompiledSubDomain('on_boundary && near((x[0]-p0)*(x[0]-p0)+(x[1]-p1)*(x[1]-p1)+(x[2]-p2)*(x[2]-p2) - ((x[0]-p0)*u0+(x[1]-p1)*u1+(x[2]-p2)*u2)*((x[0]-p0)*u0+(x[1]-p1)*u1+(x[2]-p2)*u2), rr, eps)', u0 = unit[0], u1 = unit[1], u2 = unit[2], p0 = pointa[0], p1 = pointa[1], p2 = pointa[2], rr = radius*radius, eps = eps)
+			dolfin.CompiledSubDomain(
+				'on_boundary && near((x[0]-p0)*(x[0]-p0) + (x[1]-p1)*(x[1]-p1) + (x[2]-p2)*(x[2]-p2) - ((x[0]-p0)*u0 + (x[1]-p1)*u1 + (x[2]-p2)*u2)*((x[0]-p0)*u0 + (x[1]-p1)*u1 + (x[2]-p2)*u2), rr, eps)',
+				u0 = unit[0], u1 = unit[1], u2 = unit[2], p0 = pointa[0], p1 = pointa[1], p2 = pointa[2], rr = radius*radius, eps = eps
+			)
 		])
 
 class OrthoBrick(CSG3D):
@@ -87,10 +96,10 @@ class Layers(CSG3DCollection):
 		self.boundaries = boundary.boundaries
 		self.layers = layers
 		self.elements_per_layer = elements_per_layer
-		hh = (numpy.array(high)-numpy.array(low))/(self.layers*self.elements_per_layer)
+		hh = (numpy.array(high) - numpy.array(low))/(self.layers*self.elements_per_layer)
 		lower = low + hh
 		super().add(boundary*HalfPlane(lower, hh), add_boundaries = False)
-		for ii in range(1, self.layers*self.elements_per_layer-1):
+		for ii in range(1, self.layers*self.elements_per_layer - 1):
 			super().add(boundary*(HalfPlane(lower+hh, hh)-HalfPlane(lower, hh)), add_boundaries = False)
 			lower += hh
 		super().add(boundary*HalfPlane(lower, -hh), add_boundaries = False)

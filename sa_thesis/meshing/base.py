@@ -30,6 +30,5 @@ class CSGCollection:
 		with io.H5File(filename, 'w') as h5_file:
 			h5_file.set_mesh(self.mesh)
 			h5_file.add_attribute(self.domains.array(), 'domains')
-			h5_file.write_xdmf_cells()
 			h5_file.add_attribute(self.facets.array(), 'boundaries')
-			h5_file.write_xdmf_facets()
+			h5_file.write_xdmf()
