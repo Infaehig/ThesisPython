@@ -28,7 +28,7 @@ top.mark(facets, 6)
 
 h5file = io.H5File('cube', 'w')
 h5file.set_mesh(mesh)
-h5file.add_attribute(domains.array(), 'sides')
+h5file.add_attribute(domains, 'sides')
 
 problem = problems.PoissonProblem(mesh, domains = domains, facets = facets)
 ff = dolfin.Constant(-1.)

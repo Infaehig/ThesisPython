@@ -18,7 +18,7 @@ class Circle(CSG2D):
 	def __init__(self, center, radius, *, maxh = 1., eps = csg_eps):
 		segments = max(int(4*radius/maxh), 32)
 		eps *= radius
-		super().__init__(mshr.Circle(dolfin.Point(*center), radius, segments), boundaries = [
+		super().__init__(mshr.Circle(dolfin.Point(*center), radius, segments), csg_boundaries = [
 			dolfin.CompiledSubDomain(
 				'on_boundary && near((x[0]-c0)*(x[0]-c0) + (x[1]-c1)*(x[1]-c1), rr, eps)',
 				c0 = center[0], c1 = center[1], rr = radius * radius, eps = eps
@@ -28,7 +28,7 @@ class Circle(CSG2D):
 class Rectangle(CSG2D):
 	def __init__(self, pointa, pointb, *, eps = csg_eps):
 		eps *= numpy.linalg.norm(numpy.array(pointb)-numpy.array(pointa))
-		super().__init__(mshr.Rectangle(dolfin.Point(*pointa), dolfin.Point(*pointb)), boundaries = [
+		super().__init__(mshr.Rectangle(dolfin.Point(*pointa), dolfin.Point(*pointb)), csg_boundaries = [
 			dolfin.CompiledSubDomain('on_boundary && near(x[0], xx, eps)', xx = pointa[0], eps = eps),
 			dolfin.CompiledSubDomain('on_boundary && near(x[0], xx, eps)', xx = pointb[0], eps = eps),
 			dolfin.CompiledSubDomain('on_boundary && near(x[1], xx, eps)', xx = pointa[1], eps = eps),
@@ -39,7 +39,7 @@ class CSG2DCollection(CSGCollection):
 	def __init__(self):
 		self.all = None
 		self.collection = []
-		self.boundaries = []
+		self.csg_boundaries = []
 
 	def add(self, csg2d, *, add_boundaries = True):
 		if self.all is None:
@@ -48,7 +48,7 @@ class CSG2DCollection(CSGCollection):
 			self.all += csg2d.geometry
 		self.collection.append(csg2d.geometry)
 		if add_boundaries:
-			self.boundaries.extend(csg2d.boundaries)
+			self.csg_boundaries.extend(csg2d.csg_boundaries)
 		
 	def generateMesh(self, maxh):
 		for ii, subdomain in enumerate(self.collection):
@@ -57,56 +57,11 @@ class CSG2DCollection(CSGCollection):
 			self.all.set_subdomain(ii, subdomain)
 		self.mesh = mshr.generate_mesh(self.all, int(1/maxh))
 		self.domains = dolfin.MeshFunction('size_t', self.mesh, 2, self.mesh.domains())
-		self.facets = dolfin.MeshFunction('size_t', self.mesh, 1, 0)
-		for ii, subdomain in enumerate(self.boundaries):
-			subdomain.mark(self.facets, ii+1)
+		self.boundaries = dolfin.MeshFunction('size_t', self.mesh, 1, 0)
+		for ii, subdomain in enumerate(self.csg_boundaries):
+			subdomain.mark(self.boundaries, ii+1)
 
 """
-class Layers(CSG3DCollection):
-	def __init__(self, boundary, low, high, layers = 1, *, elements_per_layer = 2):
-		super().__init__()
-		self.boundaries = boundary.boundaries
-		self.layers = layers
-		self.elements_per_layer = elements_per_layer
-		hh = (numpy.array(high)-numpy.array(low))/(self.layers*self.elements_per_layer)
-		lower = low + hh
-		super().add(boundary*HalfPlane(lower, hh), add_boundaries = False)
-		for ii in range(1, self.layers*self.elements_per_layer-1):
-			super().add(boundary*(HalfPlane(lower+hh, hh)-HalfPlane(lower, hh)), add_boundaries = False)
-			lower += hh
-		super().add(boundary*HalfPlane(lower, -hh), add_boundaries = False)
-
-	def generateMesh(self, maxh):
-		super().generateMesh(maxh)
-		self.domains.array()[:] //= self.elements_per_layer
-
-from ..helpers import io
-
-dimension = 2
-
-def do_stuff():
-	print(f'meshing {dimension}d')
-	io.do_stuff(dimension)
-
-from dolfin import *
-from mshr import *
-
-import numpy as np
-import numpy.linalg as la
-import numpy.random as rnd
-
-import logging
-import sa_utils
-from sa_utils import myeps, comm, rank, size, adapt
-
-import sa_hdf5
-
-import os
-import time
-import gc
-import multiprocessing
-
-corner_refine = 4
 
 def create_patches(box = np.array([0, 0, 1, 1]), prefix = 'test', 
 				   myrange = np.arange(2, 6, dtype = int), betas = [2.], 
@@ -619,77 +574,4 @@ def create_patches(box = np.array([0, 0, 1, 1]), prefix = 'test',
 
 	logger.info('DONE')
 
-def get_num_patches(meshdir, prefix, patch_level):
-	patch_boxes = np.genfromtxt(meshdir+'/'+prefix+'_patch_descriptors/'+str(patch_level)+'.csv', delimiter = ', ', names = True)
-	patch_num = len(patch_boxes['idx'])
-	patch_fill = int(np.log(patch_num)/np.log(10.))+1
-	return patch_num, patch_fill
-
-def load_mesh_h5py(basename):
-	ret = sa_hdf5.read_dolfin_mesh(basename)
-	return ret['mesh'], ret['cell_function'], ret['facet_function']
-
-def load_meshes_h5py(meshdir, prefix, myrange):
-	meshes = []
-	domains = []
-	facets = []
-	head = meshdir+'/'+prefix+'_'
-	ct = 0
-	num = len(myrange)
-	for ii in myrange:
-		mesh, domain, facet = load_mesh_h5py(head+str(ii))
-		print('Loading [{:d}/{:d}]'.format(ct+1, num))
-		ret = sa_hdf5.read_dolfin_mesh(head+str(ii))
-		meshes.append(mesh)
-		domains.append(domain)
-		facets.append(facet)
-		del mesh, domain, facet
-		
-		ct += 1
-	return meshes, domains, facets
-
-def load_patch_h5py(basename, contrast = 1e4, values = None, beta = 2.0, debug = False, orth_tensor = None, orth_angles = None, orth_axes = None):
-	mesh, domains, facets = load_mesh_h5py(basename+'_'+str(beta))
-	basedim = mesh.geometry().dim()
-
-	arr = np.asarray(domains.array(), dtype = np.int32)
-	arr_values = np.unique(arr)
-	del domains
-
-	inside = MeshFunction('size_t', mesh, basedim, 0)
-	inside.array()[np.where((arr % 4) < 2)] = 1
-	if debug:
-		File('debug/{:s}_inside.pvd'.format(basename.replace('/','_').replace('.',''))) << inside
-
-	coeff = None
-	if orth_tensor is None or orth_angles is None or orth_axes is None:
-		V0 = FunctionSpace(mesh, 'DG', 0)
-		coeff = Function(V0)
-		del V0
-		if values is None:
-			cc = [1., 1.*contrast, 1., 1.*contrast]
-		else:
-			cc = []
-			tmp = []
-			for ii in range(len(values)):
-				cc.append(values[ii])
-				tmp.append(values[ii])
-				if ii % 2:
-					cc += tmp
-					tmp = []
-		tmp = np.zeros_like(arr, dtype=float)
-		for val in arr_values:
-			tmp[np.where(arr == val)] = cc[val]
-		coeff.vector().set_local(tmp)
-		del tmp, cc
-		if debug:
-			mf = MeshFunction('double', mesh, basedim, 0)
-#		   mf.array()[:] = coeff.vector().array()
-			mf.array()[:] = coeff.vector().get_local() 
-			File('debug/{:s}_kappa.pvd'.format(basename.replace('/','_').replace('.',''))) << mf
-	else:
-		VT = TensorFunctionSpace(mesh, 'DG', 0, (basedim, basedim, basedim, basedim))
-	
-	del arr
-	return mesh, inside, coeff, facets 
 """

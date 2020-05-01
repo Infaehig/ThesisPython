@@ -20,6 +20,8 @@ class H5File:
 		self.compression = compression
 		self.cell_attributes = []
 		self.facet_attributes = []
+		self.cell_attribute_groups = []
+		self.facet_attribute_groups = []
 		self.scalar_groups = []
 		self.vector_groups = []
 		if mode == 'r':
@@ -43,9 +45,12 @@ class H5File:
 					data = dset['0']
 					if data.shape[0] == self.num_vertices:
 						self.scalar_groups.append(key)
-					else:
-						assert(data.shape[0] / self.num_vertices == self.basedim)
+					elif data.shape[0] / self.num_vertices == self.basedim:
 						self.vector_groups.append(key)
+					elif data.shape[0] == self.num_cells:
+						self.cell_attribute_groups.append(key)
+					elif data.shape[0] == self.num_facets:
+						self.facet_attribute_groups.append(key)
 				elif dset.shape[0] == self.num_cells:
 					self.cell_attributes.append(key)
 				elif dset.shape[0] == self.num_facets:
@@ -83,7 +88,8 @@ class H5File:
 		self.file.create_dataset('cells', (self.num_cells, self.basedim + 1), data = numpy.array(mesh.cells(), dtype = numpy.uintp), compression = self.compression)
 		self.file.create_dataset('facets', (self.num_facets, self.basedim), data = numpy.array([facet.entities(0) for facet in dolfin.facets(mesh)], dtype = numpy.uintp), compression = self.compression)
 
-	def add_attribute(self, data, key):
+	def add_attribute(self, meshfunction, key):
+		data = meshfunction.array()
 		shape = data.shape
 		self.file.create_dataset(key, shape, data = data, compression = self.compression)
 		if shape[0] == self.num_cells:
@@ -101,6 +107,53 @@ class H5File:
 			return mf
 		except:
 			raise Exception(f'Error reading attribute: {key}')
+	
+	def add_attribute_group(self, meshfunctions, key):
+		shape = meshfunctions[0].array().shape
+		group = self.file.create_group(key)
+		for ii, meshfunction in enumerate(meshfunctions):
+			group.create_dataset(f'{ii}', shape, data = meshfunction.array(), compression = self.compression)
+		if shape[0] == self.num_cells:
+			self.cell_attribute_groups.append(key)
+		elif shape[0] == self.num_facets:
+			self.facet_attribute_groups.append(key)
+	
+	def read_attribute_group(self, key):
+		try:
+			group = self.file[key]
+			first = group['0']
+			dim = self.dimension_dict[first.shape[0]]
+			dtype = type_dict[first.dtype.kind]
+			meshfunctions = []
+			ii = 0; key = f'{ii}'
+			while key in group:
+				dset = group[key]
+				meshfunctions.append(dolfin.MeshFunction(dtype, self.mesh, dim))
+				meshfunctions[-1].set_values(dset[:])
+				ii += 1; key = f'{ii}'
+			return meshfunctions
+		except:
+			raise Exception(f'Error reading attribute group: {key}')
+
+	def add_dataset_group(self, datasets, key):
+		group = self.file.create_group(key)
+		for ii, dataset in enumerate(datasets):
+			group.create_dataset(f'{ii}', dataset.shape, data = dataset, compression = self.compression)
+	
+	def read_dataset_group(self, key):
+		try:
+			group = self.file[key]
+			first = group['0']
+			dtype = type_dict[first.dtype.kind]
+			datasets = []
+			ii = 0; key = f'{ii}'
+			while key in group:
+				dset = group[key]
+				datasets.append(numpy.array(dset))
+				ii += 1; key = f'{ii}'
+			return datasets
+		except:
+			raise Exception(f'Error reading attribute group: {key}')
 
 	def add_function_group(self, functions, key, *, scale_to_one = False):
 		group = self.file.create_group(key)
@@ -163,6 +216,39 @@ class H5File:
 </Xdmf>''')
 		cell_file.close()
 		del cell_file
+
+		for key in self.cell_attribute_groups:
+			group = self.file[key]
+			group_len = len(group.keys())
+			cell_file = open(f'{self.basename}_{key}.xdmf', 'w')
+			cell_file.write(f'''<?xml version = "1.0"?>
+<Xdmf Version = "2.0" xmlns:xi = "http://www.w3.org/2001/XInclude">
+	<Domain>
+		<Grid Name = "{key}" GridType = "Collection" CollectionType = "Temporal">
+			<Time TimeType = "List">
+				<DataItem Format = "XML" Dimensions = "{group_len}">
+					{' '.join(group.keys())}
+				</DataItem>
+			</Time>''')
+			for ii in range(group_len):
+				cell_file.write(f'''
+			<Grid Name = "grid_{ii}" GridType = "Uniform">
+				<Topology NumberOfElements = "{self.num_cells}" TopologyType = "{'Tetrahedron' if self.basedim == 3 else 'Triangle'}">
+					<DataItem Format = "HDF" Dimensions = "{self.num_cells} {self.basedim + 1}">{self.basename}.h5:/cells</DataItem>
+				</Topology>
+				<Geometry GeometryType = "{'XYZ' if self.basedim == 3 else 'XY'}">
+					<DataItem Format = "HDF" Dimensions = "{self.num_vertices} {self.basedim}">{self.basename}.h5:/vertices</DataItem>
+				</Geometry>
+				<Attribute Name = "{key}" AttributeType = "Scalar" Center = "Cell">
+					<DataItem Format = "HDF" Dimensions = "{self.num_cells} 1">{self.basename}.h5:/{key}/{ii}</DataItem>
+				</Attribute>
+			</Grid>''')
+			cell_file.write('''
+		</Grid>
+	</Domain>
+</Xdmf>''')
+			cell_file.close()
+			del cell_file
 
 		for key in self.scalar_groups:
 			group = self.file[key]
@@ -265,3 +351,37 @@ class H5File:
 </Xdmf>''')
 		facet_file.close()
 		del facet_file
+
+		for key in self.facet_attribute_groups:
+			group = self.file[key]
+			group_len = len(group.keys())
+			facet_file = open(f'{self.basename}_{key}.xdmf', 'w')
+			facet_file.write(f'''<?xml version = "1.0"?>
+<Xdmf Version = "2.0" xmlns:xi = "http://www.w3.org/2001/XInclude">
+	<Domain>
+		<Grid Name = "{key}" GridType = "Collection" CollectionType = "Temporal">
+			<Time TimeType = "List">
+				<DataItem Format = "XML" Dimensions = "{group_len}">
+					{' '.join(group.keys())}
+				</DataItem>
+			</Time>''')
+			for ii in range(group_len):
+				facet_file.write(f'''
+			<Grid Name = "grid_{ii}" GridType = "Uniform">
+				<Topology NumberOfElements = "{self.num_facets}" TopologyType = "{'Triangle' if self.basedim == 3 else 'PolyLine" NodesPerElement = "2'}">
+					<DataItem Format = "HDF" Dimensions = "{self.num_facets} {self.basedim}">{self.basename}.h5:/facets</DataItem>
+				</Topology>
+				<Geometry GeometryType = "{'XYZ' if self.basedim == 3 else 'XY'}">
+					<DataItem Format = "HDF" Dimensions = "{self.num_vertices} {self.basedim}">{self.basename}.h5:/vertices</DataItem>
+				</Geometry>
+				<Attribute Name = "{key}" AttributeType = "Scalar" Center = "Cell">
+					<DataItem Format = "HDF" Dimensions = "{self.num_facets} 1">{self.basename}.h5:/{key}</DataItem>
+				</Attribute>
+			</Grid>''')
+			facet_file.write('''
+		</Grid>
+	</Domain>
+</Xdmf>''')
+			facet_file.close()
+			del cell_file
+

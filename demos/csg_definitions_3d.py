@@ -20,7 +20,7 @@ facets = layers.facets
 
 h5file = io.H5File('3layers', 'w')
 h5file.set_mesh(mesh)
-h5file.add_attribute(domains.array(), 'layers')
+h5file.add_attribute(domains, 'layers')
 
 problem = problems.PoissonProblem(mesh, domains = domains, facets = facets)
 ff = dolfin.Constant(-1.)
